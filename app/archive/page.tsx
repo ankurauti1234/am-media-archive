@@ -39,6 +39,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react'
 import { format } from 'date-fns'
+import { archiveApi } from '@/lib/api-client'
 
 // Exactly matches the channel definitions from the TV channels directory
 const CHANNELS = [
@@ -143,15 +144,8 @@ function ArchiveDashboard() {
       setIsLoading(true)
       setFetchError(null)
       try {
-        const response = await fetch(
-          `/api/archive?channelId=${selectedChannel}&date=${dateString}`
-        )
-        if (!response.ok) {
-          throw new Error(`Server returned status: ${response.status}`)
-        }
-        const data = await response.json()
+        const records = await archiveApi.getDailyRecords(selectedChannel, dateString)
         if (active) {
-          const records = data.records || []
           setDayRecords(records)
         }
       } catch (err: any) {
@@ -175,23 +169,19 @@ function ArchiveDashboard() {
   const handleOpenClosestRecording = async () => {
     setIsFindingClosest(true)
     try {
-      const res = await fetch(`/api/archive?channelId=${selectedChannel}&date=${dateString}&hour=${selectedHour}&closest=true`)
-      if (!res.ok) {
-        throw new Error('Failed to fetch closest recording')
-      }
-      const data = await res.json()
-      if (data.record) {
-        const recordDateStr = data.record.date.split('T')[0]
+      const record = await archiveApi.getClosestRecord(selectedChannel, dateString, selectedHour)
+      if (record) {
+        const recordDateStr = record.date.split('T')[0]
         const [year, month, day] = recordDateStr.split('-').map(Number)
         const recordDate = new Date(year, month - 1, day)
         setSelectedDate(recordDate)
-        setSelectedHour(data.record.hour)
+        setSelectedHour(record.hour)
       } else {
         alert('No recordings found for this channel in the database.')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error finding closest recording:', err)
-      alert('Could not search for closest recording.')
+      alert(err.message || 'Could not search for closest recording.')
     } finally {
       setIsFindingClosest(false)
     }
