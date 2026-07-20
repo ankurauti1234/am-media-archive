@@ -225,6 +225,17 @@ function ArchiveDashboard() {
     setClipEnd(60) // default to 60s (updated when metadata loads)
   }, [selectedChannel, selectedDate, selectedHour, record, activeChannelObj, dateString])
 
+  // Reset clip boundaries to video start/end when entering clipper mode or when video/duration changes
+  useEffect(() => {
+    if (isClipperMode) {
+      setClipStart(0)
+      const dur = videoRef.current?.duration || duration
+      if (dur && !isNaN(dur) && dur > 0) {
+        setClipEnd(dur)
+      }
+    }
+  }, [isClipperMode, record, duration])
+
   // Derived helper for Table View rows (incorporates active rows)
   const tableRows = useMemo(() => {
     return Array.from({ length: 24 }).map((_, hour) => {
