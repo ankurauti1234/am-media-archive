@@ -139,6 +139,24 @@ function ArchiveDashboard() {
   const [clippingProgress, setClippingProgress] = useState(0)
   const [clippingSpeed, setClippingSpeed] = useState<number>(1)
 
+  const handleClipStartChange = (val: number) => {
+    const clampedVal = Math.max(0, Math.min(val, clipEnd - 0.5))
+    setClipStart(clampedVal)
+    if (videoRef.current) {
+      videoRef.current.currentTime = clampedVal
+      setCurrentTime(clampedVal)
+    }
+  }
+
+  const handleClipEndChange = (val: number) => {
+    const clampedVal = Math.min(Math.max(val, clipStart + 0.5), duration || 3600)
+    setClipEnd(clampedVal)
+    if (videoRef.current) {
+      videoRef.current.currentTime = clampedVal
+      setCurrentTime(clampedVal)
+    }
+  }
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const isClippingRef = useRef(false)
   const clipEndRef = useRef(0)
@@ -1477,7 +1495,7 @@ function ArchiveDashboard() {
                               value={clipStart}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0
-                                setClipStart(Math.min(val, clipEnd - 0.5))
+                                handleClipStartChange(val)
                               }}
                               className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
                             />
@@ -1496,7 +1514,7 @@ function ArchiveDashboard() {
                               value={clipEnd}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0.5
-                                setClipEnd(Math.max(val, clipStart + 0.5))
+                                handleClipEndChange(val)
                               }}
                               className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
                             />
@@ -1517,7 +1535,7 @@ function ArchiveDashboard() {
                               value={clipStart}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0
-                                setClipStart(Math.max(0, Math.min(val, clipEnd - 0.5)))
+                                handleClipStartChange(val)
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
@@ -1549,7 +1567,7 @@ function ArchiveDashboard() {
                               value={clipEnd}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0.5
-                                setClipEnd(Math.max(clipStart + 0.5, Math.min(val, duration || 3600)))
+                                handleClipEndChange(val)
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
