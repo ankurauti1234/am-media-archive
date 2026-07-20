@@ -641,6 +641,15 @@ function ArchiveDashboard() {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  // Helper to format video seconds as m:ss.t (with tenths of a second)
+  const formatTimeWithSubseconds = (seconds: number): string => {
+    if (isNaN(seconds)) return '0:00.0'
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    const tenths = Math.floor((seconds % 1) * 10)
+    return `${mins}:${secs.toString().padStart(2, '0')}.${tenths}`
+  }
+
   // Determine actual playing video URL and details
   const videoUrl = useMemo(() => {
     return record?.videoS3Url || ''
@@ -1125,7 +1134,7 @@ function ArchiveDashboard() {
                         <div className="flex justify-between items-center text-xs font-mono text-white/80">
                           <span>{Math.round(clippingProgress)}%</span>
                           <span>
-                            {videoRef.current ? formatTime(videoRef.current.currentTime) : '0:00'} / {formatTime(clipEnd)}
+                            {videoRef.current ? formatTimeWithSubseconds(videoRef.current.currentTime) : '0:00.0'} / {formatTimeWithSubseconds(clipEnd)}
                           </span>
                         </div>
                         <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
@@ -1391,6 +1400,110 @@ function ArchiveDashboard() {
                         </div>
                       </div>
 
+                      {/* Timeline Track - Editor Style */}
+                      <div className="md:col-span-12 flex flex-col gap-2 bg-muted/20 border border-border/40 rounded-lg p-3">
+                        <div className="flex justify-between items-center text-[10px] text-muted-foreground font-mono">
+                          <span>Timeline Start (0:00.0)</span>
+                          <div className="flex items-center gap-1">
+                            <span className="bg-primary/25 text-primary px-2 py-0.5 rounded font-bold">
+                              Clip Duration: {(clipEnd - clipStart).toFixed(1)}s
+                            </span>
+                          </div>
+                          <span>Timeline End ({formatTimeWithSubseconds(duration || 3600)})</span>
+                        </div>
+
+                        {/* Interactive Visual Waveform / Trim Bar */}
+                        <div 
+                          className="relative h-12 bg-muted/60 border border-border/60 rounded-md overflow-hidden select-none cursor-pointer group"
+                          onClick={(e) => {
+                            // Click to seek video to clicked location on timeline
+                            if (videoRef.current && duration) {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              const pct = (e.clientX - rect.left) / rect.width
+                              const targetTime = pct * duration
+                              videoRef.current.currentTime = targetTime
+                            }
+                          }}
+                        >
+                          {/* Grid/Waveform Simulator */}
+                          <div className="absolute inset-0 flex justify-between px-2 pointer-events-none opacity-20">
+                            {Array.from({ length: 40 }).map((_, i) => (
+                              <div 
+                                key={i} 
+                                className="w-[1px] bg-foreground self-end" 
+                                style={{ 
+                                  height: i % 10 === 0 ? '80%' : i % 5 === 0 ? '55%' : '30%',
+                                }} 
+                              />
+                            ))}
+                          </div>
+
+                          {/* Shaded Trim Region */}
+                          <div 
+                            className="absolute h-full bg-primary/10 border-l-[3px] border-r-[3px] border-primary transition-all flex items-center justify-between px-1"
+                            style={{
+                              left: `${(clipStart / (duration || 3600)) * 100}%`,
+                              width: `${((clipEnd - clipStart) / (duration || 3600)) * 100}%`
+                            }}
+                          >
+                            <span className="text-[9px] font-bold text-primary opacity-60 uppercase tracking-widest select-none truncate pointer-events-none pl-2">
+                              Trim Area
+                            </span>
+                          </div>
+
+                          {/* Red playhead line tracking active video currentTime */}
+                          <div 
+                            className="absolute top-0 bottom-0 w-[2px] bg-destructive z-10 pointer-events-none shadow"
+                            style={{
+                              left: `${(currentTime / (duration || 3600)) * 100}%`
+                            }}
+                          >
+                            <div className="absolute top-0 -left-1 w-2.5 h-2.5 rounded-full bg-destructive" />
+                          </div>
+                        </div>
+
+                        {/* Dual Drag Sliders */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-muted-foreground font-semibold uppercase tracking-wider">Start Handle</span>
+                              <span className="font-mono font-medium text-foreground">{formatTimeWithSubseconds(clipStart)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max={Math.max(0, clipEnd - 0.5)}
+                              step="0.5"
+                              value={clipStart}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0
+                                setClipStart(Math.min(val, clipEnd - 0.5))
+                              }}
+                              className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-muted-foreground font-semibold uppercase tracking-wider">End Handle</span>
+                              <span className="font-mono font-medium text-foreground">{formatTimeWithSubseconds(clipEnd)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={clipStart + 0.5}
+                              max={duration || 3600}
+                              step="0.5"
+                              value={clipEnd}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0.5
+                                setClipEnd(Math.max(val, clipStart + 0.5))
+                              }}
+                              className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Timestamps inputs */}
                       <div className="md:col-span-4 grid grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1.5">
@@ -1399,12 +1512,12 @@ function ArchiveDashboard() {
                             <input
                               type="number"
                               min="0"
-                              max={clipEnd - 1}
-                              step="1"
-                              value={Math.round(clipStart)}
+                              max={clipEnd - 0.5}
+                              step="0.5"
+                              value={clipStart}
                               onChange={(e) => {
-                                const val = Math.max(0, parseInt(e.target.value) || 0)
-                                setClipStart(Math.min(val, clipEnd - 1))
+                                const val = parseFloat(e.target.value) || 0
+                                setClipStart(Math.max(0, Math.min(val, clipEnd - 0.5)))
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
@@ -1415,8 +1528,8 @@ function ArchiveDashboard() {
                               title="Set to current position"
                               onClick={() => {
                                 if (videoRef.current) {
-                                  const t = videoRef.current.currentTime
-                                  setClipStart(Math.min(t, clipEnd - 1))
+                                  const t = parseFloat(videoRef.current.currentTime.toFixed(1))
+                                  setClipStart(Math.min(t, clipEnd - 0.5))
                                 }
                               }}
                             >
@@ -1430,13 +1543,13 @@ function ArchiveDashboard() {
                           <div className="flex items-center gap-1.5">
                             <input
                               type="number"
-                              min={clipStart + 1}
+                              min={clipStart + 0.5}
                               max={duration || 3600}
-                              step="1"
-                              value={Math.round(clipEnd)}
+                              step="0.5"
+                              value={clipEnd}
                               onChange={(e) => {
-                                const val = Math.max(clipStart + 1, parseInt(e.target.value) || 0)
-                                setClipEnd(Math.min(val, duration || 3600))
+                                const val = parseFloat(e.target.value) || 0.5
+                                setClipEnd(Math.max(clipStart + 0.5, Math.min(val, duration || 3600)))
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
@@ -1447,8 +1560,8 @@ function ArchiveDashboard() {
                               title="Set to current position"
                               onClick={() => {
                                 if (videoRef.current) {
-                                  const t = videoRef.current.currentTime
-                                  setClipEnd(Math.max(t, clipStart + 1))
+                                  const t = parseFloat(videoRef.current.currentTime.toFixed(1))
+                                  setClipEnd(Math.max(t, clipStart + 0.5))
                                 }
                               }}
                             >
@@ -1466,9 +1579,9 @@ function ArchiveDashboard() {
                           onClick={() => {
                             // Quick select 30s
                             if (videoRef.current) {
-                              const curr = videoRef.current.currentTime
+                              const curr = parseFloat(videoRef.current.currentTime.toFixed(1))
                               setClipStart(curr)
-                              setClipEnd(Math.min(curr + 30, duration || 3600))
+                              setClipEnd(parseFloat(Math.min(curr + 30, duration || 3600).toFixed(1)))
                             }
                           }}
                           className="h-8 text-xs cursor-pointer border-border/60 hover:bg-muted"
@@ -1481,9 +1594,9 @@ function ArchiveDashboard() {
                           onClick={() => {
                             // Quick select 60s
                             if (videoRef.current) {
-                              const curr = videoRef.current.currentTime
+                              const curr = parseFloat(videoRef.current.currentTime.toFixed(1))
                               setClipStart(curr)
-                              setClipEnd(Math.min(curr + 60, duration || 3600))
+                              setClipEnd(parseFloat(Math.min(curr + 60, duration || 3600).toFixed(1)))
                             }
                           }}
                           className="h-8 text-xs cursor-pointer border-border/60 hover:bg-muted"
