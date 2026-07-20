@@ -38,6 +38,7 @@ import {
   ChevronsRight,
   Table as TableIcon,
   Scissors,
+  Info,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { archiveApi } from '@/lib/api-client'
@@ -138,24 +139,7 @@ function ArchiveDashboard() {
   const [isClipping, setIsClipping] = useState(false)
   const [clippingProgress, setClippingProgress] = useState(0)
   const [clippingSpeed, setClippingSpeed] = useState<number>(1)
-
-  const handleClipStartChange = (val: number) => {
-    const clampedVal = Math.max(0, Math.min(val, clipEnd - 0.5))
-    setClipStart(clampedVal)
-    if (videoRef.current) {
-      videoRef.current.currentTime = clampedVal
-      setCurrentTime(clampedVal)
-    }
-  }
-
-  const handleClipEndChange = (val: number) => {
-    const clampedVal = Math.min(Math.max(val, clipStart + 0.5), duration || 3600)
-    setClipEnd(clampedVal)
-    if (videoRef.current) {
-      videoRef.current.currentTime = clampedVal
-      setCurrentTime(clampedVal)
-    }
-  }
+  const [showClipperInfo, setShowClipperInfo] = useState(false)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const isClippingRef = useRef(false)
@@ -1400,6 +1384,21 @@ function ArchiveDashboard() {
                       </div>
                     </div>
 
+                    {showClipperInfo && (
+                      <div className="bg-muted/50 border border-border/60 rounded-[var(--radius)] p-3.5 text-xs leading-relaxed text-muted-foreground flex flex-col gap-2.5 animate-in fade-in duration-200">
+                        <div className="flex items-center gap-2 text-foreground font-semibold">
+                          <Info className="h-4 w-4 text-primary shrink-0" />
+                          <span>Why do we "Record & Trim"? Can we trim faster?</span>
+                        </div>
+                        <p>
+                          Trimming a video instantly in the browser without re-recording requires either a dedicated backend encoding server or loading a heavy WebAssembly compiler (like FFmpeg.wasm, which is ~30MB and requires complex cross-origin server headers).
+                        </p>
+                        <p>
+                          To keep this utility <strong>100% private, serverless, and lightweight</strong>, we capture the video stream directly in your browser as it plays back. You can accelerate this process by selecting the <strong>2x or 4x recording speed</strong> options above, allowing you to trim and download the clip in a fraction of the time.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                       {/* Name input */}
                       <div className="md:col-span-5 flex flex-col gap-1.5">
@@ -1495,7 +1494,11 @@ function ArchiveDashboard() {
                               value={clipStart}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0
-                                handleClipStartChange(val)
+                                const targetVal = Math.min(val, clipEnd - 0.5)
+                                setClipStart(targetVal)
+                                if (videoRef.current) {
+                                  videoRef.current.currentTime = targetVal
+                                }
                               }}
                               className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
                             />
@@ -1514,7 +1517,7 @@ function ArchiveDashboard() {
                               value={clipEnd}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0.5
-                                handleClipEndChange(val)
+                                setClipEnd(Math.max(val, clipStart + 0.5))
                               }}
                               className="w-full accent-primary cursor-pointer h-1.5 rounded-lg appearance-none bg-muted-foreground/20"
                             />
@@ -1535,7 +1538,11 @@ function ArchiveDashboard() {
                               value={clipStart}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0
-                                handleClipStartChange(val)
+                                const targetVal = Math.max(0, Math.min(val, clipEnd - 0.5))
+                                setClipStart(targetVal)
+                                if (videoRef.current) {
+                                  videoRef.current.currentTime = targetVal
+                                }
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
@@ -1567,7 +1574,7 @@ function ArchiveDashboard() {
                               value={clipEnd}
                               onChange={(e) => {
                                 const val = parseFloat(e.target.value) || 0.5
-                                handleClipEndChange(val)
+                                setClipEnd(Math.max(clipStart + 0.5, Math.min(val, duration || 3600)))
                               }}
                               className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
                             />
@@ -1628,7 +1635,16 @@ function ArchiveDashboard() {
                           className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/95 flex items-center gap-1.5 shadow-sm font-semibold cursor-pointer"
                         >
                           <Scissors className="h-3 w-3" />
-                          Record Clip
+                          Record & Trim
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setShowClipperInfo(!showClipperInfo)}
+                          className={`h-8 w-8 shrink-0 cursor-pointer border-border/60 ${showClipperInfo ? 'bg-muted text-primary border-primary/50' : 'hover:bg-muted'}`}
+                          title="Why Record & Trim?"
+                        >
+                          <Info className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
