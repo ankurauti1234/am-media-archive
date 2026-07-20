@@ -140,6 +140,22 @@ function ArchiveDashboard() {
   const [clippingProgress, setClippingProgress] = useState(0)
   const [clippingSpeed, setClippingSpeed] = useState<number>(1)
   const [showClipperInfo, setShowClipperInfo] = useState(false)
+  const [supportedExtension, setSupportedExtension] = useState<string>('webm')
+
+  // Detect browser MediaRecorder output container format support (prioritize MP4 over WebM)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+      if (
+        MediaRecorder.isTypeSupported('video/mp4;codecs=h264,aac') ||
+        MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2') ||
+        MediaRecorder.isTypeSupported('video/mp4')
+      ) {
+        setSupportedExtension('mp4')
+      } else {
+        setSupportedExtension('webm')
+      }
+    }
+  }, [])
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const isClippingRef = useRef(false)
@@ -387,14 +403,22 @@ function ArchiveDashboard() {
     // Prepare recorder
     let mimeType = 'video/webm;codecs=vp9,opus'
     if (typeof MediaRecorder.isTypeSupported === 'function') {
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp8,opus'
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm'
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/mp4'
+      if (supportedExtension === 'mp4') {
+        if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264,aac')) {
+          mimeType = 'video/mp4;codecs=h264,aac'
+        } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2')) {
+          mimeType = 'video/mp4;codecs=avc1,mp4a.40.2'
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+          mimeType = 'video/mp4'
+        }
+      } else {
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+          mimeType = 'video/webm;codecs=vp9,opus'
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+          mimeType = 'video/webm;codecs=vp8,opus'
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+          mimeType = 'video/webm'
+        }
       }
     } else {
       mimeType = 'video/webm'
@@ -1423,7 +1447,7 @@ function ArchiveDashboard() {
                             className="w-full bg-background border border-border/80 rounded-md px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono placeholder:text-muted-foreground/50 pr-12"
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-muted-foreground pointer-events-none">
-                            .webm
+                            .{supportedExtension}
                           </span>
                         </div>
                       </div>
