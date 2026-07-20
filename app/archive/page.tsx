@@ -37,6 +37,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Table as TableIcon,
+  Scissors,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { archiveApi } from '@/lib/api-client'
@@ -129,6 +130,26 @@ function ArchiveDashboard() {
 
   const [isFindingClosest, setIsFindingClosest] = useState(false)
 
+  // Video Clipper States
+  const [isClipperMode, setIsClipperMode] = useState(false)
+  const [clipStart, setClipStart] = useState<number>(0)
+  const [clipEnd, setClipEnd] = useState<number>(10)
+  const [clipName, setClipName] = useState<string>('')
+  const [isClipping, setIsClipping] = useState(false)
+  const [clippingProgress, setClippingProgress] = useState(0)
+  const [clippingSpeed, setClippingSpeed] = useState<number>(1)
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const isClippingRef = useRef(false)
+  const clipEndRef = useRef(0)
+  
+  // Cache variables to restore player state after clipping completes
+  const prevPlayStateRef = useRef(false)
+  const prevTimeRef = useRef(0)
+  const prevVolumeRef = useRef(1)
+  const prevMuteRef = useRef(false)
+  const prevSpeedRef = useRef(1)
+
   const dateString = format(selectedDate, 'yyyy-MM-dd')
   const formattedDateLabel = format(selectedDate, 'PPP')
 
@@ -193,7 +214,14 @@ function ArchiveDashboard() {
     setVideoProgress(0)
     setCurrentTime(0)
     setDuration(0)
-  }, [selectedChannel, selectedDate, selectedHour, record])
+
+    // Set default clip name based on current channel, date, and hour
+    const formattedHour = selectedHour.toString().padStart(2, '0')
+    const safeChannelName = activeChannelObj.name.replace(/[^a-zA-Z0-9]/g, '_')
+    setClipName(`${safeChannelName}_${dateString}_${formattedHour}h_clip`)
+    setClipStart(0)
+    setClipEnd(60) // default to 60s (updated when metadata loads)
+  }, [selectedChannel, selectedDate, selectedHour, record, activeChannelObj, dateString])
 
   // Derived helper for Table View rows (incorporates active rows)
   const tableRows = useMemo(() => {
@@ -265,13 +293,195 @@ function ArchiveDashboard() {
 
   const handleVideoTimeUpdate = () => {
     if (!videoRef.current) return
-    setCurrentTime(videoRef.current.currentTime)
-    setVideoProgress((videoRef.current.currentTime / (videoRef.current.duration || 1)) * 100)
+    const curTime = videoRef.current.currentTime
+    setCurrentTime(curTime)
+    setVideoProgress((curTime / (videoRef.current.duration || 1)) * 100)
+
+    // Check if we are clipping and reached end
+    if (isClippingRef.current) {
+      const totalDuration = clipEndRef.current - clipStart
+      const elapsed = Math.max(0, curTime - clipStart)
+      const pct = Math.min(100, (elapsed / (totalDuration || 1)) * 100)
+      setClippingProgress(pct)
+
+      if (curTime >= clipEndRef.current || curTime >= (videoRef.current.duration || 0)) {
+        stopClipping(true)
+      }
+    }
+  }
+
+  const stopClipping = (download = true) => {
+    if (!mediaRecorderRef.current || !isClippingRef.current) return
+
+    isClippingRef.current = false
+    setIsClipping(false)
+
+    try {
+      mediaRecorderRef.current.stop()
+    } catch (e) {
+      console.error("Error stopping MediaRecorder:", e)
+    }
+
+    if (videoRef.current) {
+      videoRef.current.pause()
+
+      // Restore previous state
+      videoRef.current.playbackRate = prevSpeedRef.current
+      videoRef.current.muted = prevMuteRef.current
+      videoRef.current.volume = prevVolumeRef.current
+      videoRef.current.currentTime = prevTimeRef.current
+      if (prevPlayStateRef.current) {
+        videoRef.current.play().catch(e => console.error("Error resuming playback:", e))
+      }
+    }
+  }
+
+  const startClipping = () => {
+    if (!videoRef.current) return
+    const video = videoRef.current
+
+    // Validation
+    if (clipStart < 0 || clipEnd <= clipStart || clipEnd > duration) {
+      alert("Invalid start or end time. Start time must be >= 0, and end time must be > start time and within video duration.")
+      return
+    }
+
+    // Cache current player state
+    prevPlayStateRef.current = !video.paused
+    prevTimeRef.current = video.currentTime
+    prevVolumeRef.current = video.volume
+    prevMuteRef.current = video.muted
+    prevSpeedRef.current = video.playbackRate
+
+    // Setup capturing stream
+    const anyVideo = video as any
+    let stream: MediaStream | null = null
+    try {
+      if (typeof anyVideo.captureStream === 'function') {
+        stream = anyVideo.captureStream()
+      } else if (typeof anyVideo.mozCaptureStream === 'function') {
+        stream = anyVideo.mozCaptureStream()
+      }
+    } catch (e) {
+      console.error("Error capturing stream:", e)
+    }
+
+    if (!stream) {
+      alert("Your browser does not support capturing streams from video elements or CORS headers are blocking it. Please ensure the video has fully loaded.")
+      return
+    }
+
+    // Prepare recorder
+    let mimeType = 'video/webm;codecs=vp9,opus'
+    if (typeof MediaRecorder.isTypeSupported === 'function') {
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8,opus'
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm'
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/mp4'
+      }
+    } else {
+      mimeType = 'video/webm'
+    }
+
+    const chunks: Blob[] = []
+    let recorder: MediaRecorder
+    try {
+      recorder = new MediaRecorder(stream, { mimeType })
+    } catch (e) {
+      console.error("Failed to construct MediaRecorder with mimeType " + mimeType, e)
+      try {
+        recorder = new MediaRecorder(stream)
+        mimeType = recorder.mimeType || 'video/webm'
+      } catch (err2) {
+        alert("Failed to start MediaRecorder: " + String(err2))
+        return
+      }
+    }
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        chunks.push(e.data)
+      }
+    }
+
+    recorder.onstop = () => {
+      if (chunks.length > 0) {
+        const blob = new Blob(chunks, { type: mimeType })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+
+        let ext = 'webm'
+        if (mimeType.includes('mp4')) {
+          ext = 'mp4'
+        } else if (mimeType.includes('ogg')) {
+          ext = 'ogg'
+        }
+
+        const cleanName = clipName.trim() || 'video_clip'
+        a.download = `${cleanName}.${ext}`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
+    }
+
+    mediaRecorderRef.current = recorder
+    isClippingRef.current = true
+    clipEndRef.current = clipEnd
+    setIsClipping(true)
+    setClippingProgress(0)
+
+    // Adjust playback settings for clipping
+    video.pause()
+    video.currentTime = clipStart
+    video.muted = true
+    video.playbackRate = clippingSpeed
+
+    // Start recording and playback
+    recorder.start(250)
+    video.play().catch(e => {
+      console.error("Error playing video for clipping:", e)
+      stopClipping(false)
+      alert("Playback failed. Please ensure the video is loaded and CORS is supported.")
+    })
+  }
+
+  const handleCancelClipping = () => {
+    if (isClippingRef.current) {
+      isClippingRef.current = false
+      setIsClipping(false)
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.onstop = null
+        try {
+          mediaRecorderRef.current.stop()
+        } catch (e) {}
+      }
+
+      // Restore video player
+      if (videoRef.current) {
+        videoRef.current.pause()
+        videoRef.current.playbackRate = prevSpeedRef.current
+        videoRef.current.muted = prevMuteRef.current
+        videoRef.current.volume = prevVolumeRef.current
+        videoRef.current.currentTime = prevTimeRef.current
+        if (prevPlayStateRef.current) {
+          videoRef.current.play().catch(e => console.error("Error resuming playback:", e))
+        }
+      }
+    }
   }
 
   const handleLoadedMetadata = () => {
     if (!videoRef.current) return
-    setDuration(videoRef.current.duration)
+    const dur = videoRef.current.duration
+    setDuration(dur)
+    setClipEnd(dur || 60)
   }
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -635,6 +845,20 @@ function ArchiveDashboard() {
                 </button>
               </div>
 
+              {activeView === 'player' && videoUrl && (
+                <Button
+                  size="sm"
+                  variant={isClipperMode ? 'default' : 'outline'}
+                  onClick={() => setIsClipperMode(!isClipperMode)}
+                  className={`h-8 text-xs flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                    isClipperMode ? 'bg-primary text-primary-foreground' : 'bg-background border-border text-foreground hover:bg-muted'
+                  }`}
+                >
+                  <Scissors className="h-3.5 w-3.5" />
+                  {isClipperMode ? 'Hide Clipper' : 'Video Clipper'}
+                </Button>
+              )}
+
               <a
                 href={videoUrl || undefined}
                 download={fileName || undefined}
@@ -870,6 +1094,7 @@ function ArchiveDashboard() {
                   <video
                     ref={videoRef}
                     src={videoUrl}
+                    crossOrigin="anonymous"
                     onClick={handleSingleClick}
                     className="w-full h-full object-contain cursor-pointer"
                     onTimeUpdate={handleVideoTimeUpdate}
@@ -879,6 +1104,52 @@ function ArchiveDashboard() {
                     preload="auto"
                     loop
                   />
+
+                  {/* Fullscreen Recording/Clipping progress overlay */}
+                  {isClipping && (
+                    <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center gap-6 z-40 p-6 animate-in fade-in duration-300">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="relative flex items-center justify-center h-16 w-16">
+                          <span className="absolute inline-flex h-full w-full rounded-full bg-destructive/30 animate-ping opacity-75"></span>
+                          <div className="relative rounded-full h-12 w-12 bg-destructive flex items-center justify-center shadow-lg shadow-destructive/50">
+                            <Scissors className="h-5 w-5 text-white animate-pulse" />
+                          </div>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-wide">Recording Video Clip...</h3>
+                        <p className="text-xs text-muted-foreground max-w-xs text-center truncate">
+                          {clipName}
+                        </p>
+                      </div>
+
+                      <div className="w-full max-w-sm flex flex-col gap-2">
+                        <div className="flex justify-between items-center text-xs font-mono text-white/80">
+                          <span>{Math.round(clippingProgress)}%</span>
+                          <span>
+                            {videoRef.current ? formatTime(videoRef.current.currentTime) : '0:00'} / {formatTime(clipEnd)}
+                          </span>
+                        </div>
+                        <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
+                          <div 
+                            className="bg-destructive h-full transition-all duration-100 ease-out"
+                            style={{ width: `${clippingProgress}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-muted-foreground mt-1">
+                          <span>Speed: {clippingSpeed}x</span>
+                          <span>Recording stream chunk active</span>
+                        </div>
+                      </div>
+
+                      <Button 
+                        variant="destructive" 
+                        size="sm"
+                        onClick={handleCancelClipping}
+                        className="h-9 px-6 font-semibold flex items-center gap-1.5 shadow-lg shadow-destructive/20 cursor-pointer"
+                      >
+                        Cancel Recording
+                      </Button>
+                    </div>
+                  )}
 
                   {/* Keyboard/Action feedback overlay in the center of the screen */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
@@ -1069,6 +1340,169 @@ function ArchiveDashboard() {
 
                   </div>
                 </div>
+
+                {isClipperMode && (
+                  <div className="bg-card border border-border/60 rounded-[var(--radius)] p-4 flex flex-col gap-4 shrink-0 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="bg-primary/10 p-1.5 rounded text-primary">
+                          <Scissors className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-foreground">Video Clipping Utility</h4>
+                          <p className="text-[10px] text-muted-foreground">Select timestamps, name your file, and record a client-side clip.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground font-medium">Record Speed:</span>
+                        <div className="flex rounded-md bg-muted p-0.5 border border-border/50">
+                          {[1, 2, 4].map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => setClippingSpeed(s)}
+                              className={`px-2 py-0.5 text-xs font-mono font-medium rounded-sm transition-all cursor-pointer ${
+                                clippingSpeed === s
+                                  ? 'bg-background text-foreground shadow-xs'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {s}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                      {/* Name input */}
+                      <div className="md:col-span-5 flex flex-col gap-1.5">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Clip File Name</label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="my_awesome_clip"
+                            value={clipName}
+                            onChange={(e) => setClipName(e.target.value.replace(/[^a-zA-Z0-9_\-]/g, ''))}
+                            className="w-full bg-background border border-border/80 rounded-md px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono placeholder:text-muted-foreground/50 pr-12"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-muted-foreground pointer-events-none">
+                            .webm
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Timestamps inputs */}
+                      <div className="md:col-span-4 grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Start Time (sec)</label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              max={clipEnd - 1}
+                              step="1"
+                              value={Math.round(clipStart)}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value) || 0)
+                                setClipStart(Math.min(val, clipEnd - 1))
+                              }}
+                              className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
+                            />
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8 shrink-0 cursor-pointer border-border/60 hover:bg-muted"
+                              title="Set to current position"
+                              onClick={() => {
+                                if (videoRef.current) {
+                                  const t = videoRef.current.currentTime
+                                  setClipStart(Math.min(t, clipEnd - 1))
+                                }
+                              }}
+                            >
+                              <Play className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">End Time (sec)</label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={clipStart + 1}
+                              max={duration || 3600}
+                              step="1"
+                              value={Math.round(clipEnd)}
+                              onChange={(e) => {
+                                const val = Math.max(clipStart + 1, parseInt(e.target.value) || 0)
+                                setClipEnd(Math.min(val, duration || 3600))
+                              }}
+                              className="w-full bg-background border border-border/80 rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono"
+                            />
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8 shrink-0 cursor-pointer border-border/60 hover:bg-muted"
+                              title="Set to current position"
+                              onClick={() => {
+                                if (videoRef.current) {
+                                  const t = videoRef.current.currentTime
+                                  setClipEnd(Math.max(t, clipStart + 1))
+                                }
+                              }}
+                            >
+                              <Play className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="md:col-span-3 flex items-end justify-end gap-2 pb-0.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Quick select 30s
+                            if (videoRef.current) {
+                              const curr = videoRef.current.currentTime
+                              setClipStart(curr)
+                              setClipEnd(Math.min(curr + 30, duration || 3600))
+                            }
+                          }}
+                          className="h-8 text-xs cursor-pointer border-border/60 hover:bg-muted"
+                        >
+                          Quick 30s
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Quick select 60s
+                            if (videoRef.current) {
+                              const curr = videoRef.current.currentTime
+                              setClipStart(curr)
+                              setClipEnd(Math.min(curr + 60, duration || 3600))
+                            }
+                          }}
+                          className="h-8 text-xs cursor-pointer border-border/60 hover:bg-muted"
+                        >
+                          Quick 60s
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={startClipping}
+                          className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/95 flex items-center gap-1.5 shadow-sm font-semibold cursor-pointer"
+                        >
+                          <Scissors className="h-3 w-3" />
+                          Record Clip
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Footer Notes details */}
                 {/* <div className="text-[11px] text-muted-foreground bg-card/10 p-3.5 rounded-[var(--radius)] border border-border/30 flex gap-2 shrink-0">
